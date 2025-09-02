@@ -1,68 +1,85 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { pool } from '../../../config/database';
 import ApiError from '../../../utils/ApiError';
+import httpStatus from 'http-status';
+import { pool } from '../../../config/database';
+import { catchAsync } from '../../../utils/catchAsync';
 
-interface DecodedToken {
+// Extend the Express Request type to include our user payload
+interface AuthRequest extends Request {
+  user?: {
     id: string;
+    role: string;
+    [key: string]: any;
+  };
 }
 
-// Augment the Express Request type to include the user property
-declare global {
-    namespace Express {
-        interface Request {
-            user?: {
-                id: string;
-                role: string;
-            };
-        }
-    }
-}
-
-// The 'export' keyword MUST be here
-export const protect = async (req: Request, res: Response, next: NextFunction) => {
+/**
+ * Middleware to protect routes by verifying a JWT.
+ * It checks for a valid token and attaches the user payload to the request object.
+ */
+export const protect = catchAsync(async (req: AuthRequest, res: Response, next: NextFunction) => {
     let token;
+    const authHeader = req.headers.authorization;
 
-    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-        try {
-            token = req.headers.authorization.split(' ')[1];
-            const decoded = jwt.verify(token, process.env.JWT_SECRET!) as DecodedToken;
-
-            const userResult = await pool.query(
-                `SELECT u.usr_user_id, r.rol_role_name 
-                 FROM users u 
-                 LEFT JOIN roles r ON u.usr_role_id = r.rol_role_id
-                 WHERE u.usr_user_id = $1`,
-                [decoded.id]
-            );
-
-            if (userResult.rows.length === 0) {
-                return next(new ApiError(401, 'Not authorized, user not found'));
-            }
-
-            req.user = {
-                id: userResult.rows[0].usr_user_id,
-                role: userResult.rows[0].rol_role_name,
-            };
-
-            next();
-        } catch (error) {
-            return next(new ApiError(401, 'Not authorized, token failed'));
-        }
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.split(' ')[1];
     }
 
     if (!token) {
-        return next(new ApiError(401, 'Not authorized, no token'));
+        throw new ApiError(httpStatus.UNAUTHORIZED, 'You are not logged in. Please log in to get access.');
     }
-};
+    
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+        throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, 'JWT Secret is not configured.');
+    }
 
-// The 'export' keyword MUST be here as well
+    const decoded = jwt.verify(token, secret) as { id: string; role: string; iat: number; exp: number };
+    
+    let userResult;
+    // Check different tables based on the role encoded in the token
+    switch (decoded.role) {
+        case 'student':
+            userResult = await pool.query('SELECT stu_student_id as id FROM students WHERE stu_student_id = $1', [decoded.id]);
+            break;
+        case 'institute_owner':
+            userResult = await pool.query('SELECT owner_id as id FROM institute_owners WHERE owner_id = $1', [decoded.id]);
+            break;
+        case 'super_admin':
+        case 'moderator':
+            userResult = await pool.query('SELECT usr_user_id as id FROM users WHERE usr_user_id = $1', [decoded.id]);
+            break;
+        default:
+            throw new ApiError(httpStatus.UNAUTHORIZED, 'Invalid user role in token.');
+    }
+
+    if (userResult.rows.length === 0) {
+        throw new ApiError(httpStatus.UNAUTHORIZED, 'The user belonging to this token does no longer exist.');
+    }
+    
+    // Attach user payload to the request for subsequent middleware/controllers
+    req.user = { id: decoded.id, role: decoded.role };
+    next();
+});
+
+/**
+ * Middleware factory to authorize users based on their role.
+ * Should be used after the `protect` middleware.
+ * @param {...string} roles - A list of roles that are allowed to access the route.
+ */
 export const authorize = (...roles: string[]) => {
-    return (req: Request, res: Response, next: NextFunction) => {
+    return (req: AuthRequest, res: Response, next: NextFunction) => {
         if (!req.user || !roles.includes(req.user.role)) {
-            return next(new ApiError(403, `User role '${req.user?.role}' is not authorized to access this route`));
+            throw new ApiError(httpStatus.FORBIDDEN, 'You do not have permission to perform this action.');
         }
         next();
     };
 };
+
+/**
+ * A general-purpose auth middleware for simple authentication checks if needed.
+ * In this new structure, `protect` is more specific and should be preferred.
+ */
+export const authMiddleware = protect;
 

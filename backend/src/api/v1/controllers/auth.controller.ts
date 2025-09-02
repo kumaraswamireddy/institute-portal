@@ -1,85 +1,74 @@
-import { Request, Response, NextFunction } from 'express';
-import { pool } from '../../../config/database';
+import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import ApiError from '../../../utils/ApiError';
-import ApiResponse from '../../../utils/ApiResponse';
+import { catchAsync } from '../../../utils/catchAsync';
+import httpStatus from 'http-status';
+import ApiResponse from '../../../utils/ApiResponse'; // Corrected: Use default import
+import ApiError from '../../../utils/ApiError'; // Corrected: Use default import
+import { pool } from '../../../config/database';
 
-// Helper function to generate JWT
-const generateToken = (id: string, role: string) => {
+/**
+ * Generates a JWT for an authenticated admin user.
+ * @param id The admin user's ID.
+ * @param role The admin user's role.
+ * @returns An application-specific JWT.
+ */
+const generateAdminToken = (id: string, role: string) => {
     const secret = process.env.JWT_SECRET;
     if (!secret) {
-        throw new ApiError(500, 'JWT Secret not configured');
+      throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, 'JWT Secret is not configured.');
     }
-
-    // FINAL FIX:
-    // We will use a number (seconds) for the expiration time to satisfy the strict
-    // type checking of the jsonwebtoken library. This is the most robust solution.
-    // The value here is for 30 days.
-    const expiresIn = 30 * 24 * 60 * 60; 
-
-    return jwt.sign({ id, role }, secret, {
-        expiresIn: expiresIn,
-    });
+    const expiresIn = '1d'; // Admin token expires in 1 day
+    return jwt.sign({ id, role }, secret, { expiresIn });
 };
 
-export const login = async (req: Request, res: Response, next: NextFunction) => {
+/**
+ * Handles the login for platform admins/staff via email and password.
+ */
+const login = catchAsync(async (req: Request, res: Response) => {
     const { email, password } = req.body;
 
-    try {
-        const userResult = await pool.query(
-            `SELECT u.*, r.rol_role_name 
-             FROM users u
-             LEFT JOIN roles r ON u.usr_role_id = r.rol_role_id
-             WHERE u.usr_email = $1`,
-            [email]
-        );
+    const userResult = await pool.query(
+        `SELECT u.usr_user_id, u.usr_email, u.usr_password_hash, r.rol_role_name 
+         FROM users u
+         LEFT JOIN roles r ON u.usr_role_id = r.rol_role_id
+         WHERE u.usr_email = $1`,
+        [email]
+    );
 
-        const user = userResult.rows[0];
+    const user = userResult.rows[0];
 
-        if (!user || !(await bcrypt.compare(password, user.usr_password_hash))) {
-            return next(new ApiError(401, 'Invalid email or password'));
-        }
-        
-        const token = generateToken(user.usr_user_id, user.rol_role_name);
-
-        res.status(200).json(new ApiResponse(200, {
-            token,
-            user: {
-                id: user.usr_user_id,
-                name: user.usr_full_name,
-                email: user.usr_email,
-                role: user.rol_role_name
-            }
-        }, 'Login successful'));
-
-    } catch (error) {
-        next(error);
+    if (!user || !(await bcrypt.compare(password, user.usr_password_hash))) {
+        throw new ApiError(httpStatus.UNAUTHORIZED, 'Invalid email or password');
     }
-};
 
-export const getMe = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-        if (!req.user?.id) {
-            return next(new ApiError(401, 'Not authenticated'));
-        }
-        
-        const userResult = await pool.query(
-            `SELECT u.usr_user_id AS id, u.usr_full_name AS name, u.usr_email AS email, r.rol_role_name AS role
-             FROM users u
-             LEFT JOIN roles r ON u.usr_role_id = r.rol_role_id
-             WHERE u.usr_user_id = $1`,
-            [req.user.id] 
-        );
+    const token = generateAdminToken(user.usr_user_id, user.rol_role_name);
 
-        if (userResult.rows.length === 0) {
-            return next(new ApiError(404, 'User not found'));
-        }
+    const userResponse = {
+        id: user.usr_user_id,
+        email: user.usr_email,
+        role: user.rol_role_name,
+    };
+    
+    res.status(httpStatus.OK).json(new ApiResponse(httpStatus.OK, { user: userResponse, token }, 'Admin login successful.'));
+});
 
-        res.status(200).json(new ApiResponse(200, userResult.rows[0], 'User data fetched successfully'));
+// Placeholder for admin logout logic
+const logout = catchAsync(async (req: Request, res: Response) => {
+    // TODO: Implement token invalidation/logout logic here if needed (e.g., blocklisting tokens)
+    res.status(httpStatus.OK).json(new ApiResponse(httpStatus.OK, {}, 'Logout successful.'));
+});
 
-    } catch (error) {
-        next(error);
-    }
+// Placeholder for admin token refresh logic
+const refreshAccessToken = catchAsync(async (req: Request, res: Response) => {
+    // TODO: Implement refresh token logic for admins
+    res.status(httpStatus.OK).json(new ApiResponse(httpStatus.OK, {}, 'Token refreshed.'));
+});
+
+
+export const authController = {
+  login,
+  logout,
+  refreshAccessToken,
 };
 

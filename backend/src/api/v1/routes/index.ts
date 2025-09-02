@@ -1,26 +1,35 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import authRoutes from './auth.routes';
 import adminRoutes from './admin.routes';
-import instituteRoutes from './institute.routes';
 import courseRoutes from './course.routes';
-import studentRoutes from './student.routes';
+import instituteRoutes from './institute.routes';
 import marketplaceRoutes from './marketplace.routes';
 import paymentRoutes from './payment.routes';
-import { googleAuthRoutes } from './googleAuth.routes'; // New feature import
+import studentRoutes from './student.routes';
 
 const router = Router();
 
-// --- Existing Routes ---
-router.use('/auth', authRoutes); // For Platform Admins
+// =================================================================
+// <<< NEW DEBUGGING MIDDLEWARE >>>
+// This will log every incoming request to the v1 API to your terminal.
+// =================================================================
+router.use((req: Request, res: Response, next: NextFunction) => {
+    console.log(`[API V1 DEBUG] Received request for: ${req.method} ${req.originalUrl}`);
+    next();
+});
+
+
+// All authentication routes are correctly grouped under the '/auth' prefix.
+router.use('/auth', authRoutes);
+
+// Other routes
 router.use('/admin', adminRoutes);
-router.use('/institutes', instituteRoutes);
 router.use('/courses', courseRoutes);
-router.use('/students', studentRoutes);
+router.use('/institutes', instituteRoutes);
 router.use('/marketplace', marketplaceRoutes);
 router.use('/payments', paymentRoutes);
+router.use('/students', studentRoutes);
 
-// --- New Feature Route ---
-// For public-facing Student & Institute Google Sign-In
-router.use('/user', googleAuthRoutes);
 
 export default router;
+

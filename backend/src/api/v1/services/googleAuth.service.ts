@@ -1,69 +1,93 @@
-import { OAuth2Client } from 'google-auth-library';
+import { OAuth2Client, LoginTicket } from 'google-auth-library';
 import jwt from 'jsonwebtoken';
-import { PrismaClient } from '@prisma/client';
-import { ApiError } from '../../../utils/ApiError';
+import { pool } from '../../../config/database';
+import ApiError from '../../../utils/ApiError';
 import httpStatus from 'http-status';
+import logger from '../../../utils/logger';
 
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-key';
+// ... (constants and other functions remain the same) ...
 
-const prisma = new PrismaClient();
-const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const verifyGoogleToken = async (idToken: string) => {
-    try {
-        const ticket = await googleClient.verifyIdToken({
-            idToken,
-            audience: GOOGLE_CLIENT_ID,
-        });
-        const payload = ticket.getPayload();
-        if (!payload || !payload.email) {
-            throw new ApiError(httpStatus.UNAUTHORIZED, 'Invalid Google token: No payload found.');
-        }
-        return payload;
-    } catch (error) {
-        throw new ApiError(httpStatus.UNAUTHORIZED, 'Google token verification failed.');
+  try {
+    const ticket: LoginTicket = await googleClient.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    if (!payload || !payload.email || !payload.sub) {
+      throw new ApiError(httpStatus.UNAUTHORIZED, 'Invalid Google token: No payload found.');
     }
+    return {
+        googleId: payload.sub,
+        email: payload.email,
+        name: payload.name || 'User',
+        profilePictureUrl: payload.picture, 
+    };
+  } catch (error) {
+    logger.error('Google token verification failed:', error);
+    throw new ApiError(httpStatus.UNAUTHORIZED, 'Google token verification failed.');
+  }
 };
 
-const generateAppToken = (payload: { id: string; email: string; role: 'student' | 'institute_owner' }) => {
-    return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+const generateAppToken = (payload: { id: string; role: 'student' | 'institute_owner' | 'super_admin' | 'moderator' }) => {
+  return jwt.sign(payload, process.env.JWT_SECRET!, { expiresIn: '7d' });
 };
 
 const handleGoogleSignIn = async (idToken: string) => {
-    const googlePayload = await verifyGoogleToken(idToken);
-    const { email, name, sub: googleId } = googlePayload;
+    const googleProfile = await verifyGoogleToken(idToken);
 
-    if (!email) {
-        throw new ApiError(httpStatus.BAD_REQUEST, 'Email not found in Google token.');
+    let userResult = await pool.query('SELECT * FROM students WHERE stu_google_id = $1 OR stu_email = $2', [googleProfile.googleId, googleProfile.email]);
+    if (userResult.rows.length > 0) {
+        const student = userResult.rows[0];
+        const token = generateAppToken({ id: student.stu_student_id, role: 'student' });
+        return { isNewUser: false, user: student, token };
     }
 
-    let owner = await prisma.institute_owners.findUnique({ where: { owner_email: email } });
-    if (owner) {
-        const token = generateAppToken({ id: owner.owner_id, email: owner.owner_email, role: 'institute_owner' });
-        return { user: owner, token, isNewUser: false, role: 'institute_owner' };
+    userResult = await pool.query('SELECT * FROM institute_owners WHERE owner_google_id = $1 OR owner_email = $2', [googleProfile.googleId, googleProfile.email]);
+    if (userResult.rows.length > 0) {
+        const owner = userResult.rows[0];
+        const token = generateAppToken({ id: owner.owner_id, role: 'institute_owner' });
+        return { isNewUser: false, user: owner, token };
     }
-
-    let student = await prisma.students.findUnique({ where: { stu_email: email } });
-    if (student) {
-        const token = generateAppToken({ id: student.stu_student_id, email: student.stu_email, role: 'student' });
-        return { user: student, token, isNewUser: false, role: 'student' };
-    }
-
-    return { isNewUser: true, email, name: name || '', googleId };
+    
+    return { isNewUser: true, googleProfile };
 };
 
-const registerNewUser = async (email: string, name: string, googleId: string, role: 'student' | 'institute', instituteName?: string) => {
+const registerNewUser = async (
+    email: string, 
+    name: string, 
+    googleId: string, 
+    profilePictureUrl: string | undefined,
+    role: 'student' | 'institute', 
+    instituteName?: string
+) => {
+    const studentCheck = await pool.query('SELECT stu_student_id FROM students WHERE stu_email = $1', [email]);
+    if (studentCheck.rows.length > 0) {
+        throw new ApiError(httpStatus.CONFLICT, 'An account with this email already exists as a student.');
+    }
+    const ownerCheck = await pool.query('SELECT owner_id FROM institute_owners WHERE owner_email = $1', [email]);
+    if (ownerCheck.rows.length > 0) {
+        throw new ApiError(httpStatus.CONFLICT, 'An account with this email already exists as an institute owner.');
+    }
+
+    // Proactive Improvement: Ensure we pass null instead of undefined to the database
+    const finalProfilePicUrl = profilePictureUrl || null;
+
     if (role === 'student') {
-        const newStudent = await prisma.students.create({
-            data: {
-                stu_email: email,
-                stu_full_name: name,
-                stu_google_id: googleId,
-            },
-        });
-        const token = generateAppToken({ id: newStudent.stu_student_id, email: newStudent.stu_email, role: 'student' });
-        return { user: newStudent, token, role: 'student' };
+        try {
+            const newStudentResult = await pool.query(
+                'INSERT INTO students (stu_full_name, stu_email, stu_google_id, stu_profile_picture_url) VALUES ($1, $2, $3, $4) RETURNING *',
+                [name, email, googleId, finalProfilePicUrl] // Use the safer variable
+            );
+            const newStudent = newStudentResult.rows[0];
+            const token = generateAppToken({ id: newStudent.stu_student_id, role: 'student' });
+            return { user: newStudent, token };
+        } catch (error) {
+            logger.error('Error creating new student:', error);
+            throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, 'Could not create student account. Ensure database schema is up to date.');
+        }
     }
 
     if (role === 'institute') {
@@ -71,34 +95,40 @@ const registerNewUser = async (email: string, name: string, googleId: string, ro
             throw new ApiError(httpStatus.BAD_REQUEST, 'Institute name is required for registration.');
         }
 
-        const newOwnerAndInstitute = await prisma.$transaction(async (tx) => {
-            const newOwner = await tx.institute_owners.create({
-                data: {
-                    owner_email: email,
-                    owner_full_name: name,
-                    owner_google_id: googleId,
-                },
-            });
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
 
-            await tx.institutes.create({
-                data: {
-                    inst_name: instituteName,
-                    inst_owner_id: newOwner.owner_id,
-                    inst_status: 'pending_approval',
-                },
-            });
+            const newOwnerResult = await client.query(
+                'INSERT INTO institute_owners (owner_full_name, owner_email, owner_google_id, owner_profile_picture_url) VALUES ($1, $2, $3, $4) RETURNING *',
+                [name, email, googleId, finalProfilePicUrl] // Use the safer variable
+            );
+            const newOwner = newOwnerResult.rows[0];
 
-            return newOwner;
-        });
+            await client.query(
+                'INSERT INTO institutes (inst_name, inst_owner_id) VALUES ($1, $2)',
+                [instituteName, newOwner.owner_id]
+            );
+            
+            await client.query('COMMIT');
+            
+            const token = generateAppToken({ id: newOwner.owner_id, role: 'institute_owner' });
+            return { user: newOwner, token };
 
-        const token = generateAppToken({ id: newOwnerAndInstitute.owner_id, email: newOwnerAndInstitute.owner_email, role: 'institute_owner' });
-        return { user: newOwnerAndInstitute, token, role: 'institute_owner' };
+        } catch (error) {
+            await client.query('ROLLBACK');
+            logger.error('Error creating new institute and owner:', error);
+            throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, 'Could not create institute account. Ensure database schema is up to date.');
+        } finally {
+            client.release();
+        }
     }
-
+    
     throw new ApiError(httpStatus.BAD_REQUEST, 'Invalid role specified for registration.');
 };
 
 export const googleAuthService = {
-    handleGoogleSignIn,
-    registerNewUser,
+  handleGoogleSignIn,
+  registerNewUser,
 };
+

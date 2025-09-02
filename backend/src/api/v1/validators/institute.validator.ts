@@ -1,39 +1,40 @@
 import { z } from 'zod';
-import { ResourceStatusEnum } from '../models/institute.model';
 
-// Zod schema for creating a new institute
-export const createInstituteSchema = z.object({
+const createInstitute = z.object({
   body: z.object({
-    inst_admin_user_id: z.string().uuid({ message: "Admin user ID must be a valid UUID" }),
-    inst_name: z.string().min(3, { message: "Institute name must be at least 3 characters long" }).max(255),
-    inst_description: z.string().optional(),
-    inst_address: z.string().optional(),
-    inst_city: z.string().optional(),
-    inst_pincode: z.string().length(6, { message: "Pincode must be 6 digits" }).optional(),
-    inst_latitude: z.number().min(-90).max(90).optional(),
-    inst_longitude: z.number().min(-180).max(180).optional(),
-    inst_plan_id: z.string().uuid({ message: "Plan ID must be a valid UUID" }).optional(),
+    name: z.string().min(3, 'Institute name must be at least 3 characters long.'),
+    description: z.string().optional(),
+    address: z.string().min(10, 'Address is required and must be detailed.'),
+    city: z.string().min(2, 'City is required.'),
+    state: z.string().min(2, 'State is required.'),
+    zipCode: z.string().regex(/^\d{5,6}$/, 'Invalid zip code format.'),
+    country: z.string().min(2, 'Country is required.'),
+    phone: z.string().regex(/^\+?[1-9]\d{1,14}$/, 'Invalid phone number format.').optional(),
+    email: z.string().email('Invalid email address.').optional(),
+    website: z.string().url('Invalid URL.').optional(),
   }),
 });
 
-
-// Zod schema for updating an institute
-export const updateInstituteSchema = z.object({
+const updateInstitute = z.object({
   params: z.object({
-    instituteId: z.string().uuid({ message: "Institute ID must be a valid UUID" }),
+    id: z.string().uuid('Invalid institute ID.'),
   }),
   body: z.object({
-    inst_name: z.string().min(3).max(255).optional(),
-    inst_description: z.string().optional(),
-    inst_address: z.string().optional(),
-    inst_city: z.string().optional(),
-    inst_pincode: z.string().length(6).optional(),
-    inst_latitude: z.number().min(-90).max(90).optional(),
-    inst_longitude: z.number().min(-180).max(180).optional(),
-    inst_status: z.nativeEnum(ResourceStatusEnum).optional(),
-    inst_is_verified: z.boolean().optional(),
-    inst_plan_id: z.string().uuid().optional(),
-    inst_plan_end_date: z.string().datetime().optional(),
-  }).partial(), // .partial() makes all fields in the body optional
+    name: z.string().min(3, 'Institute name must be at least 3 characters long.').optional(),
+    description: z.string().optional(),
+    address: z.string().min(10, 'Address must be detailed.').optional(),
+    city: z.string().min(2, 'City is required.').optional(),
+    state: z.string().min(2, 'State is required.').optional(),
+    zipCode: z.string().regex(/^\d{5,6}$/, 'Invalid zip code format.').optional(),
+    country: z.string().min(2, 'Country is required.').optional(),
+    phone: z.string().regex(/^\+?[1-9]\d{1,14}$/, 'Invalid phone number format.').optional(),
+    email: z.string().email('Invalid email address.').optional(),
+    website: z.string().url('Invalid URL.').optional(),
+    status: z.enum(['pending_approval', 'active', 'disabled']).optional(),
+  }),
 });
 
+export const instituteValidator = {
+  createInstitute,
+  updateInstitute,
+};

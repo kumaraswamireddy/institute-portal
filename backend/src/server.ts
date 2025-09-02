@@ -1,31 +1,54 @@
-// The dotenv import and config MUST be the first lines of code
-import dotenv from 'dotenv';
-dotenv.config();
-
-// Now we can import the rest of the application
 import app from './app';
-import { pool } from './config/database';
 import logger from './utils/logger';
+import { pool } from './config/database';
 
 const PORT = process.env.PORT || 5000;
 
-const startServer = async () => {
+const server = app.listen(PORT, async () => {
+    logger.info(`Server is running on port ${PORT}`);
     try {
-        // Test the database connection
-        const client = await pool.connect();
+        await pool.query('SELECT NOW()');
         logger.info('Database connected successfully.');
-        client.release(); // Release the client back to the pool
-
-        app.listen(PORT, () => {
-            logger.info(`Server is running on port ${PORT}`);
-        });
-
     } catch (error) {
-        // This will now provide a more detailed error if the connection fails
-        logger.error('Failed to connect to the database', error);
-        process.exit(1); // Exit the process with an error code
+        logger.error('Failed to connect to the database.', error);
+        process.exit(1);
     }
-};
+});
 
-startServer();
+// =================================================================
+// <<< IMPROVED ERROR HANDLING >>>
+// This will catch specific server startup errors like EADDRINUSE
+// and provide a more helpful message instead of a generic crash.
+// =================================================================
+server.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.syscall !== 'listen') {
+        throw error;
+    }
+    const bind = typeof PORT === 'string' ? 'Pipe ' + PORT : 'Port ' + PORT;
+    switch (error.code) {
+        case 'EACCES':
+            logger.error(`${bind} requires elevated privileges`);
+            process.exit(1);
+            break;
+        case 'EADDRINUSE':
+            logger.error(`${bind} is already in use. Please stop the other process or use a different port.`);
+            process.exit(1);
+            break;
+        default:
+            throw error;
+    }
+});
+
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    logger.info('SIGTERM signal received: closing HTTP server');
+    server.close(() => {
+        logger.info('HTTP server closed');
+        pool.end(() => {
+            logger.info('Database pool has ended');
+            process.exit(0);
+        });
+    });
+});
 

@@ -1,14 +1,13 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { AuthProvider } from "@/lib/AuthContext";
-import { GoogleOAuthProvider } from "@react-oauth/google";
+import { Providers } from "./providers"; // Import the new client component
 
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Institute Management Portal",
-  description: "Find and manage the best educational institutes.",
+  description: "A comprehensive portal for managing institutes, students, and more.",
 };
 
 export default function RootLayout({
@@ -16,23 +15,15 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // Ensure you have this environment variable set
-  const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-
-  if (!googleClientId) {
-    // You can render a more user-friendly error message here
-    throw new Error("NEXT_PUBLIC_GOOGLE_CLIENT_ID is not set in environment variables.");
-  }
-
   return (
     <html lang="en">
       <body className={inter.className}>
-        <GoogleOAuthProvider clientId={googleClientId}>
-          <AuthProvider>
-            {children}
-          </AuthProvider>
-        </GoogleOAuthProvider>
+        {/* The Providers component now handles all client-side context */}
+        <Providers>
+          {children}
+        </Providers>
       </body>
     </html>
   );
 }
+
