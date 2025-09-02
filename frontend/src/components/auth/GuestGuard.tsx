@@ -14,13 +14,18 @@ export function GuestGuard({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!loading && user) {
-      // User is logged in, redirect them to their appropriate dashboard.
+      // =================================================================
+      // <<< THE DEFINITIVE FIX >>>
+      // The guard now correctly handles admin roles and redirects them to the admin dashboard.
+      // =================================================================
       if (user.role === 'student') {
         router.push('/student/dashboard');
       } else if (user.role === 'institute_owner') {
         router.push('/institute/dashboard');
+      } else if (user.role === 'super_admin' || user.role === 'moderator') {
+        router.push('/admin/dashboard');
       } else {
-        router.push('/'); // Fallback redirect
+        router.push('/'); // Fallback for any unknown roles
       }
     }
   }, [user, loading, router]);
@@ -37,3 +42,4 @@ export function GuestGuard({ children }: { children: React.ReactNode }) {
   // If not loading and no user, it's a guest, so render the page.
   return <>{children}</>;
 }
+
