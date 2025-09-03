@@ -11,11 +11,19 @@ const googleSignIn = catchAsync(async (req: Request, res: Response) => {
 });
 
 const register = catchAsync(async (req: Request, res: Response) => {
-    // Destructure all expected fields from the body
-    const { email, name, googleId, profilePictureUrl, role, instituteName } = req.body;
+    // Destructure all fields from the request body
+    const { email, googleId, profilePictureUrl, role, fullName, mobileNo, instituteName } = req.body;
     
-    // Corrected: Call the service with the arguments in the correct order to match the service definition.
-    const result = await googleAuthService.registerNewUser(email, name, googleId, profilePictureUrl, role, instituteName);
+    // Call the service with the new, complete set of arguments
+    const result = await googleAuthService.registerNewUser(
+        email, 
+        googleId, 
+        profilePictureUrl, 
+        role, 
+        fullName, 
+        mobileNo, 
+        instituteName
+    );
     
     res.status(httpStatus.CREATED).json(new ApiResponse(httpStatus.CREATED, result, 'User registered successfully'));
 });

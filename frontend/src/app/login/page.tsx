@@ -1,5 +1,6 @@
 import { GuestGuard } from '@/components/auth/GuestGuard';
-import LoginPageClient from '@/components/auth/LoginPageClient';
+// Corrected: Use a named import to match the component's export
+import { LoginPageClient } from '@/components/auth/LoginPageClient';
 import React from 'react';
 
 /**
@@ -8,7 +9,6 @@ import React from 'react';
  */
 export default function LoginPage() {
   return (
-    // This main element now ensures its children are centered on the page.
     <main className="flex min-h-screen items-center justify-center bg-gray-50">
       <GuestGuard>
         <LoginPageClient />
